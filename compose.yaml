@@ -1,0 +1,55 @@
+name: hotel-booking
+x-app: &app
+  build: .
+  environment: &environment
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hotel}:${POSTGRES_PASSWORD:-hotel_dev_password}@db:5432/${POSTGRES_DB:-hotel}
+    JWT_SECRET: ${JWT_SECRET:-local-development-only-change-this-secret-64-characters-minimum-12345}
+    SEED_PASSWORD: ${SEED_PASSWORD:-HotelDemo123!}
+  depends_on:
+    init:
+      condition: service_completed_successfully
+  restart: unless-stopped
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hotel}
+      POSTGRES_USER: ${POSTGRES_USER:-hotel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hotel_dev_password}
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  init:
+    <<: *app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    command: ["sh", "-c", "alembic upgrade head && python -m app.scripts.seed"]
+  api:
+    <<: *app
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; import time; assert time.time()-Path('/tmp/hotel-worker-heartbeat').stat().st_mtime < 60"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+volumes:
+  postgres_data:
