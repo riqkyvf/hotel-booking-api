@@ -5,10 +5,11 @@ from enum import StrEnum
 from typing import Annotated, Generic, TypeVar
 from uuid import UUID
 
+from email_validator import EmailNotValidError, validate_email
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
-    EmailStr,
     Field,
     StringConstraints,
     field_validator,
@@ -17,6 +18,46 @@ from pydantic import (
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 Money = Annotated[Decimal, Field(gt=0, le=9999999999.99, max_digits=12, decimal_places=2)]
+
+
+def normalize_email(value):
+    if not isinstance(value, str):
+        raise ValueError("Email must be a string.")
+    # Check the original value: trimming must not hide controls or Unicode whitespace.
+    if any(not 0x20 <= ord(char) <= 0x7E for char in value):
+        raise ValueError("Email must contain only printable ASCII characters.")
+    value = value.strip(" ").lower()
+    if " " in value or "<" in value or ">" in value:
+        raise ValueError("Provide an email address without internal spaces or a display name.")
+    try:
+        # Keep ASCII domains in their ASCII representation, including punycode.
+        return validate_email(value, check_deliverability=False, allow_smtputf8=False).ascii_email
+    except EmailNotValidError:
+        raise ValueError("Invalid email address format.") from None
+
+
+EmailAddress = Annotated[
+    str,
+    Field(
+        max_length=254,
+        description="ASCII email address. Trim outer ASCII spaces, lowercase; internal spaces and controls are forbidden.",
+        json_schema_extra={"format": "email"},
+    ),
+    BeforeValidator(normalize_email),
+]
+Password = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=10,
+        max_length=128,
+        strip_whitespace=False,
+        pattern=r"^[\x21-\x7E]+$",
+    ),
+    Field(
+        description="10–128 printable ASCII characters excluding spaces (U+0021–U+007E). Case-sensitive; no trimming or composition requirement."
+    ),
+]
 
 
 class Role(StrEnum):
@@ -57,18 +98,11 @@ class Output(BaseModel):
 
 
 class EmailInput(Input):
-    email: Annotated[EmailStr, Field(max_length=254)]
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_email(cls, value):
-        return value.strip().lower() if isinstance(value, str) else value
+    email: EmailAddress
 
 
 class Login(EmailInput):
-    password: Annotated[
-        str, StringConstraints(min_length=10, max_length=128, strip_whitespace=False)
-    ]
+    password: Password
 
 
 class Register(Login):
@@ -77,14 +111,16 @@ class Register(Login):
 
 
 class ProfilePatch(Input):
-    email: Annotated[EmailStr, Field(max_length=254)] | None = None
+    email: EmailAddress | None = None
     name: Name | None = None
     phone: str | None = Field(default=None, pattern=r"^\+?[0-9]{7,15}$")
 
     @field_validator("email", mode="before")
     @classmethod
-    def normalize_email(cls, value):
-        return value.strip().lower() if isinstance(value, str) else value
+    def email_not_null(cls, value):
+        if value is None:
+            raise ValueError("Email cannot be null.")
+        return value
 
     @model_validator(mode="after")
     def validate_patch(self):

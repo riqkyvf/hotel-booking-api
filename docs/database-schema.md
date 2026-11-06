@@ -9,7 +9,7 @@ PostgreSQL 17, SQLAlchemy 2.x, Alembic. Начальная ревизия: `0001
 | Поле | Тип | Ограничение / смысл |
 |---|---|---|
 | id | UUID | PK |
-| email | VARCHAR(254) | NOT NULL, UNIQUE uq_users_email; приложение нормализует регистр |
+| email | VARCHAR(254) | NOT NULL, UNIQUE uq_users_email; приложение допускает только ASCII-адрес, обрезает крайние U+0020 и нормализует регистр |
 | password_hash | VARCHAR(255) | NOT NULL, Argon2 |
 | name | VARCHAR(100) | NOT NULL |
 | phone | VARCHAR(25) | NULL допустим |
